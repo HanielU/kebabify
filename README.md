@@ -18,6 +18,12 @@ cargo install --path .
 
 ## Usage
 
+Show help information:
+
+```bash
+kebabify --help
+```
+
 Basic usage (current directory):
 
 ```bash
