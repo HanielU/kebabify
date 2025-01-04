@@ -120,15 +120,12 @@ fn update_imports(content: &str) -> (String, usize) {
         let path = &caps[2];
         let suffix = &caps[3];
 
-        println!("Processing path: {}", path); // Debug print
-
         // Split the path into segments
         let segments: Vec<&str> = path.split('/').collect();
         let new_segments: Vec<String> = segments
             .iter()
             .map(|segment| {
-                println!("Processing segment: {}", segment); // Debug print
-                                                             // Don't convert . or .. segments
+                // Don't convert . or .. segments
                 if *segment == "." || *segment == ".." {
                     segment.to_string()
                 } else {
@@ -140,13 +137,7 @@ fn update_imports(content: &str) -> (String, usize) {
                         let ext = parts[1..].join(".");
                         if needs_conversion(name) {
                             changes += 1;
-                            let converted = format!(
-                                "{}.{}",
-                                pascal_to_kebab_smart(name),
-                                ext
-                            );
-                            println!("Converting {} to {}", segment, converted); // Debug print
-                            converted
+                            format!("{}.{}", pascal_to_kebab_smart(name), ext)
                         } else {
                             segment.to_string()
                         }
@@ -154,23 +145,17 @@ fn update_imports(content: &str) -> (String, usize) {
                         // No extension - convert if needed
                         if needs_conversion(segment) {
                             changes += 1;
-                            let converted = pascal_to_kebab_smart(segment);
-                            println!("Converting {} to {}", segment, converted); // Debug print
-                            converted
+                            pascal_to_kebab_smart(segment)
                         } else {
                             segment.to_string()
                         }
                     };
-                    println!("Segment result: {}", result); // Debug print
                     result
                 }
             })
             .collect();
 
-        let final_path =
-            format!("{}{}{}", prefix, new_segments.join("/"), suffix);
-        println!("Final path: {}", final_path); // Debug print
-        final_path
+        format!("{}{}{}", prefix, new_segments.join("/"), suffix)
     });
 
     (result.to_string(), changes)
@@ -306,26 +291,12 @@ fn camel_to_kebab(s: &str) -> String {
 
 fn pascal_to_kebab_smart(filename: &str) -> String {
     let case = detect_case(filename);
-    println!("Detected case for '{}': {:?}", filename, case); // Debug print
-    let result = match case {
+    match case {
         Case::Kebab => filename.to_string(),
-        Case::Pascal => {
-            let converted = pascal_to_kebab(filename);
-            println!("Pascal conversion '{}' -> '{}'", filename, converted); // Debug print
-            converted
-        }
-        Case::Camel => {
-            let converted = camel_to_kebab(filename);
-            println!("Camel conversion '{}' -> '{}'", filename, converted); // Debug print
-            converted
-        }
-        Case::Acronym => {
-            let converted = acronym_to_kebab(filename);
-            println!("Acronym conversion '{}' -> '{}'", filename, converted); // Debug print
-            converted
-        }
-    };
-    result
+        Case::Pascal => pascal_to_kebab(filename),
+        Case::Camel => camel_to_kebab(filename),
+        Case::Acronym => acronym_to_kebab(filename),
+    }
 }
 
 fn rename_file(path: &Path) -> Result<()> {
