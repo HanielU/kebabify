@@ -106,47 +106,71 @@ fn process_file_imports(path: &Path) -> Result<()> {
 fn update_imports(content: &str) -> (String, usize) {
     let mut changes = 0;
 
-    // Match both ES6 imports and requires
     let import_regex = Regex::new(
         r#"(?x)
-        (import\s+[^"']*?from\s*["']|require\(["'])  # import/require start
-        ([^"']+)                                     # path capture
-        (["'][\);]?)                                 # closing quote/paren
+        (import\s+(?:type\s+)?[^"']*?from\s*["']|require\(["'])  # import/require start with optional type
+        ([^"']+)                                                  # path capture
+        (["'][\);]?)                                             # closing quote/paren
     "#,
     )
     .unwrap();
-
-    // Updated regex to handle both path segments and filenames
-    let path_regex =
-        Regex::new(r"(^|[\\/])([A-Z][a-zA-Z0-9]+)([\\/]|\.[\w]+$|$)").unwrap();
 
     let result = import_regex.replace_all(content, |caps: &regex::Captures| {
         let prefix = &caps[1];
         let path = &caps[2];
         let suffix = &caps[3];
 
-        // Keep replacing until no more changes are made
-        let mut current_path = path.to_string();
-        loop {
-            let new_path = path_regex
-                .replace_all(&current_path, |pcaps: &regex::Captures| {
-                    changes += 1;
-                    format!(
-                        "{}{}{}",
-                        &pcaps[1], // separator or start
-                        pascal_to_kebab_smart(&pcaps[2]),
-                        &pcaps[3] // separator or extension
-                    )
-                })
-                .to_string();
+        println!("Processing path: {}", path); // Debug print
 
-            if new_path == current_path {
-                break;
-            }
-            current_path = new_path;
-        }
+        // Split the path into segments
+        let segments: Vec<&str> = path.split('/').collect();
+        let new_segments: Vec<String> = segments
+            .iter()
+            .map(|segment| {
+                println!("Processing segment: {}", segment); // Debug print
+                                                             // Don't convert . or .. segments
+                if *segment == "." || *segment == ".." {
+                    segment.to_string()
+                } else {
+                    // Split segment into filename and extension if it has one
+                    let parts: Vec<&str> = segment.split('.').collect();
+                    let result = if parts.len() > 1 {
+                        // Has extension
+                        let name = parts[0];
+                        let ext = parts[1..].join(".");
+                        if needs_conversion(name) {
+                            changes += 1;
+                            let converted = format!(
+                                "{}.{}",
+                                pascal_to_kebab_smart(name),
+                                ext
+                            );
+                            println!("Converting {} to {}", segment, converted); // Debug print
+                            converted
+                        } else {
+                            segment.to_string()
+                        }
+                    } else {
+                        // No extension - convert if needed
+                        if needs_conversion(segment) {
+                            changes += 1;
+                            let converted = pascal_to_kebab_smart(segment);
+                            println!("Converting {} to {}", segment, converted); // Debug print
+                            converted
+                        } else {
+                            segment.to_string()
+                        }
+                    };
+                    println!("Segment result: {}", result); // Debug print
+                    result
+                }
+            })
+            .collect();
 
-        format!("{}{}{}", prefix, current_path, suffix)
+        let final_path =
+            format!("{}{}{}", prefix, new_segments.join("/"), suffix);
+        println!("Final path: {}", final_path); // Debug print
+        final_path
     });
 
     (result.to_string(), changes)
@@ -157,17 +181,31 @@ fn needs_conversion(filename: &str) -> bool {
     filename.chars().any(|c| c.is_uppercase())
 }
 
+#[derive(Debug, PartialEq)]
+enum Case {
+    Pascal,  // MyComponent
+    Camel,   // myComponent
+    Acronym, // XMLHTTPRequest
+    Kebab,   // my-component
+}
+
 fn detect_case(s: &str) -> Case {
     let mut has_uppercase = false;
     let mut prev_was_uppercase = false;
     let mut consecutive_uppercase = 0;
+    let mut first_char_is_uppercase = false;
+    let mut first_char_seen = false;
 
     for c in s.chars() {
+        if !first_char_seen {
+            first_char_is_uppercase = c.is_uppercase();
+            first_char_seen = true;
+        }
+
         if c.is_uppercase() {
             has_uppercase = true;
             if prev_was_uppercase {
                 consecutive_uppercase += 1;
-                // If we have 2 or more consecutive uppercase letters, it's an acronym
                 if consecutive_uppercase >= 2 {
                     return Case::Acronym;
                 }
@@ -183,27 +221,26 @@ fn detect_case(s: &str) -> Case {
 
     if !has_uppercase {
         Case::Kebab
-    } else {
+    } else if first_char_is_uppercase {
         Case::Pascal
+    } else {
+        Case::Camel
     }
-}
-
-#[derive(Debug, PartialEq)]
-enum Case {
-    Pascal,  // MyComponent
-    Acronym, // XMLHTTPRequest
-    Kebab,   // my-component
 }
 
 fn pascal_to_kebab(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + 5);
-    let mut chars = s.chars().peekable();
+    let mut chars = s.chars();
 
-    while let Some(c) = chars.next() {
+    // Handle first character
+    if let Some(c) = chars.next() {
+        result.push(c.to_lowercase().next().unwrap());
+    }
+
+    // Handle rest of the string
+    for c in chars {
         if c.is_uppercase() {
-            if !result.is_empty() {
-                result.push('-');
-            }
+            result.push('-');
             result.push(c.to_lowercase().next().unwrap());
         } else {
             result.push(c);
@@ -245,12 +282,50 @@ fn acronym_to_kebab(s: &str) -> String {
     result
 }
 
-fn pascal_to_kebab_smart(filename: &str) -> String {
-    match detect_case(filename) {
-        Case::Kebab => filename.to_string(),
-        Case::Pascal => pascal_to_kebab(filename),
-        Case::Acronym => acronym_to_kebab(filename),
+fn camel_to_kebab(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() + 5);
+    let mut chars = s.chars().peekable();
+
+    // Handle first character
+    if let Some(c) = chars.next() {
+        result.push(c.to_lowercase().next().unwrap());
     }
+
+    // Handle rest of the string
+    while let Some(c) = chars.next() {
+        if c.is_uppercase() {
+            result.push('-');
+            result.push(c.to_lowercase().next().unwrap());
+        } else {
+            result.push(c);
+        }
+    }
+
+    result
+}
+
+fn pascal_to_kebab_smart(filename: &str) -> String {
+    let case = detect_case(filename);
+    println!("Detected case for '{}': {:?}", filename, case); // Debug print
+    let result = match case {
+        Case::Kebab => filename.to_string(),
+        Case::Pascal => {
+            let converted = pascal_to_kebab(filename);
+            println!("Pascal conversion '{}' -> '{}'", filename, converted); // Debug print
+            converted
+        }
+        Case::Camel => {
+            let converted = camel_to_kebab(filename);
+            println!("Camel conversion '{}' -> '{}'", filename, converted); // Debug print
+            converted
+        }
+        Case::Acronym => {
+            let converted = acronym_to_kebab(filename);
+            println!("Acronym conversion '{}' -> '{}'", filename, converted); // Debug print
+            converted
+        }
+    };
+    result
 }
 
 fn rename_file(path: &Path) -> Result<()> {
@@ -297,6 +372,7 @@ mod tests {
     #[test]
     fn test_detect_case() {
         assert_eq!(detect_case("MyComponent"), Case::Pascal);
+        assert_eq!(detect_case("myComponent"), Case::Camel);
         assert_eq!(detect_case("XMLHTTPRequest"), Case::Acronym);
         assert_eq!(detect_case("my-component"), Case::Kebab);
     }
@@ -315,6 +391,18 @@ mod tests {
         assert_eq!(
             pascal_to_kebab_smart("ButtonComponent"),
             "button-component"
+        );
+
+        // Camel case
+        assert_eq!(pascal_to_kebab_smart("myComponent"), "my-component");
+        assert_eq!(
+            pascal_to_kebab_smart("buttonComponent"),
+            "button-component"
+        );
+        assert_eq!(pascal_to_kebab_smart("myXMLParser"), "my-xml-parser");
+        assert_eq!(
+            pascal_to_kebab_smart("getHTTPResponse"),
+            "get-http-response"
         );
 
         // Acronyms
@@ -342,13 +430,24 @@ mod tests {
             import MyComponent from './MyComponent.svelte';
             import { Something } from '../ComponentLibrary/ButtonComponent';
             const util = require('./UtilityFunctions');
+            import { useGetCurrentPlan } from './useGetCurrentPlan.svelte';
+            import { useMediaRecorder } from './useMediaRecorder.svelte';
+            import type { Delimiter } from "components/Messages/StyledText.svelte";
+            import type { MessageHandler } from "./useMessageHandler.svelte";
         "#;
 
         let (new_content, changes) = update_imports(content);
-        assert_eq!(changes, 4); // MyComponent, ComponentLibrary, ButtonComponent, UtilityFunctions
+
+        println!("New content:\n{}", new_content);
+
+        assert_eq!(changes, 9);
         assert!(new_content.contains("./my-component.svelte"));
         assert!(new_content.contains("component-library/button-component"));
         assert!(new_content.contains("./utility-functions"));
+        assert!(new_content.contains("./use-get-current-plan.svelte"));
+        assert!(new_content.contains("./use-media-recorder.svelte"));
+        assert!(new_content.contains("components/messages/styled-text.svelte"));
+        assert!(new_content.contains("./use-message-handler.svelte"));
     }
 
     #[test]
