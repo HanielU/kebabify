@@ -134,7 +134,7 @@ fn update_imports(content: &str) -> (String, usize) {
                     format!(
                         "{}{}{}",
                         &pcaps[1], // separator or start
-                        pascal_to_kebab(&pcaps[2]),
+                        pascal_to_kebab_smart(&pcaps[2]),
                         &pcaps[3] // separator or extension
                     )
                 })
@@ -157,22 +157,100 @@ fn needs_conversion(filename: &str) -> bool {
     filename.chars().any(|c| c.is_uppercase())
 }
 
-fn pascal_to_kebab(filename: &str) -> String {
-    let mut result = String::with_capacity(filename.len() + 5);
-    let mut chars = filename.chars().peekable();
+fn detect_case(s: &str) -> Case {
+    let mut has_uppercase = false;
+    let mut prev_was_uppercase = false;
+    let mut consecutive_uppercase = 0;
 
-    while let Some(current) = chars.next() {
-        if current.is_uppercase() {
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() {
+            has_uppercase = true;
+            if prev_was_uppercase {
+                consecutive_uppercase += 1;
+                // If we have 2 or more consecutive uppercase letters, it's an acronym
+                if consecutive_uppercase >= 2 {
+                    return Case::Acronym;
+                }
+            } else {
+                consecutive_uppercase = 0;
+            }
+            prev_was_uppercase = true;
+        } else {
+            prev_was_uppercase = false;
+            consecutive_uppercase = 0;
+        }
+    }
+
+    if !has_uppercase {
+        Case::Kebab
+    } else {
+        Case::Pascal
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum Case {
+    Pascal,  // MyComponent
+    Acronym, // XMLHTTPRequest
+    Kebab,   // my-component
+}
+
+fn pascal_to_kebab(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() + 5);
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c.is_uppercase() {
             if !result.is_empty() {
                 result.push('-');
             }
-            result.push(current.to_lowercase().next().unwrap());
+            result.push(c.to_lowercase().next().unwrap());
         } else {
-            result.push(current);
+            result.push(c);
         }
     }
 
     result
+}
+
+fn acronym_to_kebab(s: &str) -> String {
+    let mut result = String::new();
+    let mut acronym = String::new();
+    let mut prev_lower = false;
+
+    for (i, c) in s.char_indices() {
+        if c.is_uppercase() {
+            if !acronym.is_empty() && prev_lower {
+                result.push('-');
+            }
+            acronym.push(c);
+            prev_lower = false;
+        } else {
+            if !acronym.is_empty() {
+                result.push_str(&acronym.to_lowercase());
+                acronym.clear();
+            }
+            result.push(c);
+            prev_lower = true;
+        }
+    }
+
+    if !acronym.is_empty() {
+        if prev_lower {
+            result.push('-');
+        }
+        result.push_str(&acronym.to_lowercase());
+    }
+
+    result
+}
+
+fn pascal_to_kebab_smart(filename: &str) -> String {
+    match detect_case(filename) {
+        Case::Kebab => filename.to_string(),
+        Case::Pascal => pascal_to_kebab(filename),
+        Case::Acronym => acronym_to_kebab(filename),
+    }
 }
 
 fn rename_file(path: &Path) -> Result<()> {
@@ -184,8 +262,8 @@ fn rename_file(path: &Path) -> Result<()> {
         .context("Failed to get file stem")?
         .to_string_lossy();
 
-    // Convert only the stem to kebab case
-    let new_stem = pascal_to_kebab(&stem);
+    // Convert only the stem to kebab case using our new smart function
+    let new_stem = pascal_to_kebab_smart(&stem);
 
     // Create new filename with original extension
     let new_filename = if let Some(ext) = path.extension() {
@@ -207,4 +285,152 @@ fn rename_file(path: &Path) -> Result<()> {
     })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+use tempfile::TempDir;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_case() {
+        assert_eq!(detect_case("MyComponent"), Case::Pascal);
+        assert_eq!(detect_case("XMLHTTPRequest"), Case::Acronym);
+        assert_eq!(detect_case("my-component"), Case::Kebab);
+    }
+
+    #[test]
+    fn test_pascal_to_kebab_smart() {
+        // Pascal case
+        assert_eq!(pascal_to_kebab_smart("MyComponent"), "my-component");
+        assert_eq!(
+            pascal_to_kebab_smart("ButtonComponent"),
+            "button-component"
+        );
+
+        // Acronyms
+        assert_eq!(pascal_to_kebab_smart("API"), "api");
+        assert_eq!(pascal_to_kebab_smart("XMLHTTPRequest"), "xml-http-request");
+        assert_eq!(pascal_to_kebab_smart("MyXMLParser"), "my-xml-parser");
+        assert_eq!(pascal_to_kebab_smart("APIEndpoint"), "api-endpoint");
+        assert_eq!(pascal_to_kebab_smart("MyAPIService"), "my-api-service");
+
+        // Already kebab case
+        assert_eq!(pascal_to_kebab_smart("already-kebab"), "already-kebab");
+    }
+
+    #[test]
+    fn test_needs_conversion() {
+        assert!(needs_conversion("MyComponent"));
+        assert!(needs_conversion("ButtonComponent"));
+        assert!(!needs_conversion("my-component"));
+        assert!(!needs_conversion("regular-file"));
+    }
+
+    #[test]
+    fn test_update_imports() {
+        let content = r#"
+            import MyComponent from './MyComponent.svelte';
+            import { Something } from '../ComponentLibrary/ButtonComponent';
+            const util = require('./UtilityFunctions');
+        "#;
+
+        let (new_content, changes) = update_imports(content);
+        assert_eq!(changes, 4); // MyComponent, ComponentLibrary, ButtonComponent, UtilityFunctions
+        assert!(new_content.contains("./my-component.svelte"));
+        assert!(new_content.contains("component-library/button-component"));
+        assert!(new_content.contains("./utility-functions"));
+    }
+
+    #[test]
+    fn test_matches_source_file() {
+        assert!(matches_source_file(Path::new("test.ts")));
+        assert!(matches_source_file(Path::new("test.tsx")));
+        assert!(matches_source_file(Path::new("test.svelte")));
+        assert!(!matches_source_file(Path::new("test.txt")));
+        assert!(!matches_source_file(Path::new("test")));
+    }
+
+    mod integration {
+        use super::*;
+        use std::path::PathBuf;
+
+        fn setup_test_directory() -> Result<(TempDir, PathBuf)> {
+            let temp_dir = TempDir::new()?;
+            let test_dir = temp_dir.path().join("test");
+            fs::create_dir(&test_dir)?;
+
+            // Create test files
+            fs::write(
+                test_dir.join("MyComponent.svelte"),
+                r#"<script>
+                    import ButtonComponent from './ComponentLibrary/ButtonComponent.svelte';
+                </script>"#,
+            )?;
+
+            fs::create_dir(test_dir.join("ComponentLibrary"))?;
+            fs::write(
+                test_dir.join("ComponentLibrary/ButtonComponent.svelte"),
+                "<div>Button</div>",
+            )?;
+
+            Ok((temp_dir, test_dir))
+        }
+
+        #[test]
+        fn test_rename_files() -> Result<()> {
+            let (_temp_dir, test_dir) = setup_test_directory()?;
+
+            process_directory(&test_dir)?;
+
+            assert!(test_dir.join("my-component.svelte").exists());
+            assert!(test_dir.join("component-library").exists());
+            assert!(test_dir
+                .join("component-library/button-component.svelte")
+                .exists());
+
+            Ok(())
+        }
+
+        #[test]
+        fn test_process_imports() -> Result<()> {
+            let (_temp_dir, test_dir) = setup_test_directory()?;
+
+            process_imports(&test_dir)?;
+
+            let content =
+                fs::read_to_string(test_dir.join("MyComponent.svelte"))?;
+            assert!(
+                content.contains("./component-library/button-component.svelte")
+            );
+
+            Ok(())
+        }
+
+        #[test]
+        fn test_full_process() -> Result<()> {
+            let (_temp_dir, test_dir) = setup_test_directory()?;
+
+            // Process both imports and filenames
+            process_imports(&test_dir)?;
+            process_directory(&test_dir)?;
+
+            // Check if files were renamed
+            assert!(test_dir.join("my-component.svelte").exists());
+            assert!(test_dir
+                .join("component-library/button-component.svelte")
+                .exists());
+
+            // Check if imports were updated
+            let content =
+                fs::read_to_string(test_dir.join("my-component.svelte"))?;
+            assert!(
+                content.contains("./component-library/button-component.svelte")
+            );
+
+            Ok(())
+        }
+    }
 }
