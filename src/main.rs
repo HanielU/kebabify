@@ -13,18 +13,28 @@ struct Args {
     #[arg(default_value = ".")]
     path: PathBuf,
 
-    /// Process import statements in files instead of filenames
+    /// Process import statements in files
     #[arg(long, short = 'i')]
     imports: bool,
+
+    /// Process both filenames and imports
+    #[arg(long, short = 'a', conflicts_with = "imports")]
+    all: bool,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    if args.imports {
+
+    // Process imports first to ensure paths are still valid
+    if args.all || args.imports {
         process_imports(&args.path)?;
-    } else {
+    }
+
+    // Then rename files and directories
+    if args.all || !args.imports {
         process_directory(&args.path)?;
     }
+
     Ok(())
 }
 
@@ -36,22 +46,22 @@ fn process_directory(dir: &Path) -> Result<()> {
         .filter_map(|e| e.ok())
         .collect();
 
-    // Process directories first (bottom-up) to handle nested paths correctly
-    for entry in entries.iter().rev() {
-        if entry.file_type().is_dir() {
-            if let Some(dirname) = entry.file_name().to_str() {
-                if needs_conversion(dirname) {
+    // First, process files (top-down)
+    for entry in entries.iter() {
+        if entry.file_type().is_file() {
+            if let Some(filename) = entry.file_name().to_str() {
+                if needs_conversion(filename) {
                     rename_file(entry.path())?;
                 }
             }
         }
     }
 
-    // Then process files
-    for entry in entries.iter() {
-        if entry.file_type().is_file() {
-            if let Some(filename) = entry.file_name().to_str() {
-                if needs_conversion(filename) {
+    // Then process directories (bottom-up)
+    for entry in entries.iter().rev() {
+        if entry.file_type().is_dir() {
+            if let Some(dirname) = entry.file_name().to_str() {
+                if needs_conversion(dirname) {
                     rename_file(entry.path())?;
                 }
             }

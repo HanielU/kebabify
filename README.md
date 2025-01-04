@@ -36,6 +36,12 @@ Process import statements instead of filenames:
 kebabify -i /path/to/directory
 ```
 
+Process both filenames and import statements:
+
+```bash
+kebabify -a /path/to/directory
+```
+
 ### Examples
 
 Before:
