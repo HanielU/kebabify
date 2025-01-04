@@ -30,6 +30,12 @@ Specify a directory:
 kebabify /path/to/directory
 ```
 
+Process import statements instead of filenames:
+
+```bash
+kebabify -i /path/to/directory
+```
+
 ### Examples
 
 Before:
@@ -37,8 +43,8 @@ Before:
 ```
 MyProject/
 ├── ComponentLibrary/
-│   ├── ButtonComponent.svelte
-│   └── InputField.svelte
+│ ├── ButtonComponent.svelte
+│ └── InputField.svelte
 └── UtilityFunctions.ts
 ```
 
@@ -47,9 +53,25 @@ After:
 ```
 my-project/
 ├── component-library/
-│   ├── button-component.svelte
-│   └── input-field.svelte
+│ ├── button-component.svelte
+│ └── input-field.svelte
 └── utility-functions.ts
+```
+
+Import statement conversion:
+
+Before:
+
+```
+import ButtonComponent from './ComponentLibrary/ButtonComponent.svelte';
+const Utils = require('./UtilityFunctions');
+```
+
+After:
+
+```
+import ButtonComponent from './component-library/button-component.svelte';
+const Utils = require('./utility-functions');
 ```
 
 ## Building from Source

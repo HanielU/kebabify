@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
+use regex::Regex;
+use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -10,11 +12,19 @@ struct Args {
     /// The directory path to process
     #[arg(default_value = ".")]
     path: PathBuf,
+
+    /// Process import statements in files instead of filenames
+    #[arg(long, short = 'i')]
+    imports: bool,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    process_directory(&args.path)?;
+    if args.imports {
+        process_imports(&args.path)?;
+    } else {
+        process_directory(&args.path)?;
+    }
     Ok(())
 }
 
@@ -48,6 +58,88 @@ fn process_directory(dir: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn process_imports(dir: &Path) -> Result<()> {
+    let entries: Vec<_> = WalkDir::new(dir)
+        .follow_links(true)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file() && matches_source_file(e.path()))
+        .collect();
+
+    for entry in entries {
+        process_file_imports(entry.path())?;
+    }
+    Ok(())
+}
+
+fn matches_source_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("js" | "jsx" | "ts" | "tsx" | "svelte" | "vue")
+    )
+}
+
+fn process_file_imports(path: &Path) -> Result<()> {
+    let content = fs::read_to_string(path)?;
+    let (new_content, changes) = update_imports(&content);
+
+    if changes > 0 {
+        println!("Updated {} imports in: {}", changes, path.display());
+        fs::write(path, new_content)?;
+    }
+
+    Ok(())
+}
+
+fn update_imports(content: &str) -> (String, usize) {
+    let mut changes = 0;
+
+    // Match both ES6 imports and requires
+    let import_regex = Regex::new(
+        r#"(?x)
+        (import\s+[^"']*?from\s*["']|require\(["'])  # import/require start
+        ([^"']+)                                     # path capture
+        (["'][\);]?)                                 # closing quote/paren
+    "#,
+    )
+    .unwrap();
+
+    // Updated regex to handle both path segments and filenames
+    let path_regex =
+        Regex::new(r"(^|[\\/])([A-Z][a-zA-Z0-9]+)([\\/]|\.[\w]+$|$)").unwrap();
+
+    let result = import_regex.replace_all(content, |caps: &regex::Captures| {
+        let prefix = &caps[1];
+        let path = &caps[2];
+        let suffix = &caps[3];
+
+        // Keep replacing until no more changes are made
+        let mut current_path = path.to_string();
+        loop {
+            let new_path = path_regex
+                .replace_all(&current_path, |pcaps: &regex::Captures| {
+                    changes += 1;
+                    format!(
+                        "{}{}{}",
+                        &pcaps[1], // separator or start
+                        pascal_to_kebab(&pcaps[2]),
+                        &pcaps[3] // separator or extension
+                    )
+                })
+                .to_string();
+
+            if new_path == current_path {
+                break;
+            }
+            current_path = new_path;
+        }
+
+        format!("{}{}{}", prefix, current_path, suffix)
+    });
+
+    (result.to_string(), changes)
 }
 
 fn needs_conversion(filename: &str) -> bool {
