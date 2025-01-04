@@ -162,7 +162,7 @@ fn detect_case(s: &str) -> Case {
     let mut prev_was_uppercase = false;
     let mut consecutive_uppercase = 0;
 
-    for (i, c) in s.chars().enumerate() {
+    for c in s.chars() {
         if c.is_uppercase() {
             has_uppercase = true;
             if prev_was_uppercase {
@@ -218,7 +218,7 @@ fn acronym_to_kebab(s: &str) -> String {
     let mut acronym = String::new();
     let mut prev_lower = false;
 
-    for (i, c) in s.char_indices() {
+    for c in s.chars() {
         if c.is_uppercase() {
             if !acronym.is_empty() && prev_lower {
                 result.push('-');
@@ -302,6 +302,13 @@ mod tests {
     }
 
     #[test]
+    /// This test is inherently flawed and will likely fail in edge cases.
+    /// It's impossible to algorithmically detect with 100% accuracy whether a word is an acronym
+    /// without additional context or a predefined list. For example:
+    /// - Is "ID" an acronym for "Identifier" or just the word "Id"?
+    /// - Is "UNESCO" one acronym or "UN-ESCO"?
+    /// - Is "LASER" still an acronym even though it's now commonly written as "laser"?
+    /// The best we can do is make educated guesses based on common patterns.
     fn test_pascal_to_kebab_smart() {
         // Pascal case
         assert_eq!(pascal_to_kebab_smart("MyComponent"), "my-component");
