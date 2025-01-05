@@ -108,7 +108,7 @@ fn update_imports(content: &str) -> (String, usize) {
 
     let import_regex = Regex::new(
         r#"(?x)
-        (import\s+(?:type\s+)?[^"']*?from\s*["']|require\(["'])  # import/require start with optional type
+        ((?:import|export)\s+(?:type\s+)?[^"']*?from\s*["']|require\(["'])  # import/export/require start with optional type
         ([^"']+)                                                  # path capture
         (["'][\);]?)                                             # closing quote/paren
     "#,
@@ -405,13 +405,15 @@ mod tests {
             import { useMediaRecorder } from './useMediaRecorder.svelte';
             import type { Delimiter } from "components/Messages/StyledText.svelte";
             import type { MessageHandler } from "./useMessageHandler.svelte";
+            export { MyExportedComponent } from './ExportedComponent.svelte';
+            export type { ExportedType } from './TypeDefinitions';
         "#;
 
         let (new_content, changes) = update_imports(content);
 
         println!("New content:\n{}", new_content);
 
-        assert_eq!(changes, 9);
+        assert_eq!(changes, 11);
         assert!(new_content.contains("./my-component.svelte"));
         assert!(new_content.contains("component-library/button-component"));
         assert!(new_content.contains("./utility-functions"));
@@ -419,6 +421,8 @@ mod tests {
         assert!(new_content.contains("./use-media-recorder.svelte"));
         assert!(new_content.contains("components/messages/styled-text.svelte"));
         assert!(new_content.contains("./use-message-handler.svelte"));
+        assert!(new_content.contains("./exported-component.svelte"));
+        assert!(new_content.contains("./type-definitions"));
     }
 
     #[test]
